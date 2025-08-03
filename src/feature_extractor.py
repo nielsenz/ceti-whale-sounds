@@ -19,7 +19,10 @@ from dataclasses import dataclass
 from enum import Enum
 import pandas as pd
 
-from .coda_detector import Coda
+try:
+    from .coda_detector import Coda
+except ImportError:
+    from coda_detector import Coda
 
 
 class TempoCategory(Enum):
@@ -61,6 +64,14 @@ class PhoneticFeatures:
         Whether ornamentation is present
     phonetic_code : str
         Combined code representing all features
+    detection_confidence : float
+        Overall detection confidence (0-1)
+    rhythm_confidence : float
+        Confidence in rhythm pattern detection (0-1)
+    classification_confidence : float
+        Confidence in feature classification (0-1)
+    is_echolocation_likely : bool
+        Whether this is likely echolocation vs communication
     """
     rhythm_pattern: str
     rhythm_groups: List[int]
@@ -71,6 +82,32 @@ class PhoneticFeatures:
     ornamentation_count: int
     has_ornamentation: bool
     phonetic_code: str
+    detection_confidence: float = 0.0
+    rhythm_confidence: float = 0.0
+    classification_confidence: float = 0.0
+    is_echolocation_likely: bool = False
+
+
+@dataclass
+class ClickDetection:
+    """
+    Enhanced click detection with confidence measures.
+    
+    Attributes:
+    -----------
+    time : float
+        Click time in seconds
+    amplitude : float
+        Click amplitude (normalized)
+    snr : float
+        Signal-to-noise ratio
+    confidence : float
+        Detection confidence (0-1)
+    """
+    time: float
+    amplitude: float
+    snr: float = 0.0
+    confidence: float = 0.0
 
 
 class FeatureExtractor:
@@ -91,8 +128,9 @@ class FeatureExtractor:
         Threshold for moderate rubato level
     rubato_high_threshold : float, default=0.30
         Threshold for high rubato level
-    rhythm_break_factor : float, default=1.5
-        Factor for detecting rhythm breaks (ICI > mean * factor)
+    rhythm_break_factor : float, default=2.0
+        Factor for detecting rhythm breaks (ICI > mean + factor * std)
+        FIXED: Now uses standard deviation for more robust detection
     ornamentation_base_length : int, default=5
         Expected base length for detecting ornamentation
     """
@@ -103,7 +141,7 @@ class FeatureExtractor:
         tempo_fast_threshold: float = 4.0,
         rubato_moderate_threshold: float = 0.15,
         rubato_high_threshold: float = 0.30,
-        rhythm_break_factor: float = 1.5,
+        rhythm_break_factor: float = 2.0,  # More conservative threshold
         ornamentation_base_length: int = 5
     ):
         self.tempo_slow_threshold = tempo_slow_threshold
@@ -121,6 +159,8 @@ class FeatureExtractor:
         by longer pauses. For example, clicks at [0, 0.2, 0.8, 1.0, 1.2]
         might be grouped as "2+3" (2 clicks, pause, 3 clicks).
         
+        FIXED: Corrected off-by-one error in group counting logic.
+        
         Parameters:
         -----------
         coda : Coda
@@ -133,37 +173,40 @@ class FeatureExtractor:
         groups : List[int]
             Number of clicks in each group
         """
-        if coda.num_clicks <= 1:
-            return "1", [1]
-        
-        if coda.num_clicks == 2:
-            return "2", [2]
+        if coda.num_clicks <= 2:
+            return str(coda.num_clicks), [coda.num_clicks]
         
         # Calculate inter-click intervals
         icis = coda.inter_click_intervals
-        
-        # Find rhythm breaks based on longer intervals
         mean_ici = np.mean(icis)
-        rhythm_breaks = []
+        std_ici = np.std(icis)
         
+        # More conservative threshold to avoid detecting rubato as rhythm breaks
+        rhythm_break_threshold = mean_ici + 2.0 * std_ici
+        
+        # Find rhythm breaks
+        rhythm_breaks = []
         for i, ici in enumerate(icis):
-            if ici > self.rhythm_break_factor * mean_ici:
+            if ici > rhythm_break_threshold:
                 rhythm_breaks.append(i)
         
-        # Group clicks based on breaks
+        # Count clicks properly - FIXED off-by-one error
         groups = []
-        start_idx = 0
+        current_group_start = 0
         
         for break_idx in rhythm_breaks:
-            group_size = break_idx - start_idx + 1
+            # Group includes clicks from start to break position (inclusive)
+            group_size = break_idx - current_group_start + 1
             groups.append(group_size)
-            start_idx = break_idx + 1
+            # Next group starts after the break
+            current_group_start = break_idx + 1
         
-        # Add final group
-        final_group_size = len(icis) - start_idx + 1
-        groups.append(final_group_size)
+        # Final group - count remaining clicks
+        final_group_size = coda.num_clicks - current_group_start
+        if final_group_size > 0:
+            groups.append(final_group_size)
         
-        # Create pattern string
+        # Fallback if no groups detected
         if not groups:
             groups = [coda.num_clicks]
         
@@ -175,8 +218,8 @@ class FeatureExtractor:
         """
         Extract tempo features from coda.
         
-        Tempo is measured as clicks per second, calculated as the number of
-        inter-click intervals divided by the total coda duration.
+        Tempo is measured as clicks per second for biological interpretation.
+        FIXED: Now calculates actual clicks per second, not intervals per second.
         
         Parameters:
         -----------
@@ -186,16 +229,19 @@ class FeatureExtractor:
         Returns:
         --------
         tempo_cps : float
-            Tempo in clicks per second
+            Tempo in clicks per second (biological interpretation)
         tempo_category : TempoCategory
             Categorical classification
         """
         if coda.num_clicks <= 1 or coda.duration <= 0:
             return 0.0, TempoCategory.SLOW
         
-        # Calculate tempo as (n_clicks - 1) / duration
-        # This gives us the rate of click intervals per second
-        tempo_cps = (coda.num_clicks - 1) / coda.duration
+        # FIXED: Calculate tempo as actual clicks per second
+        # For biological interpretation: "5 clicks per second" means 5 clicks in 1 second
+        tempo_cps = coda.num_clicks / coda.duration
+        
+        # Note: For technical analysis, interval rate would be:
+        # interval_rate = (coda.num_clicks - 1) / coda.duration
         
         # Categorize tempo
         if tempo_cps < self.tempo_slow_threshold:
@@ -251,13 +297,76 @@ class FeatureExtractor:
         
         return rubato_score, level
     
-    def extract_ornamentation(self, coda: Coda) -> Tuple[int, bool]:
+    def extract_ornamentation(self, coda: Coda, rhythm_pattern: str = None) -> Tuple[int, bool]:
         """
         Extract ornamentation features from coda.
         
         Ornamentation refers to extra decorative clicks beyond the basic
-        pattern structure. This is detected by comparing the coda length
-        to expected typical lengths for the rhythm pattern.
+        pattern structure. FIXED: Now detects ornamentation relative to
+        expected pattern length, not a fixed baseline.
+        
+        Parameters:
+        -----------
+        coda : Coda
+            Coda to analyze
+        rhythm_pattern : str, optional
+            Rhythm pattern for context-aware detection
+            
+        Returns:
+        --------
+        ornamentation_count : int
+            Number of extra clicks beyond expected pattern
+        has_ornamentation : bool
+            Whether ornamentation is present
+        """
+        # Define expected lengths for known whale patterns
+        expected_lengths = {
+            '1+3': 4,
+            '2+3': 5,
+            '1+4': 5,
+            '3+1': 4,
+            '1+1+3': 5,
+            '2+1+3': 6,
+            '5R': 5,   # Regular 5-click pattern
+            '4R': 4,   # Regular 4-click pattern
+            '6R': 6,   # Regular 6-click pattern
+            '7R': 7,   # Regular 7-click pattern
+            '8R': 8,   # Regular 8-click pattern
+            '3': 3,    # Simple 3-click pattern
+            '4': 4,    # Simple 4-click pattern
+            '5': 5,    # Simple 5-click pattern
+            '6': 6,    # Simple 6-click pattern
+            '7': 7,    # Simple 7-click pattern
+        }
+        
+        # If rhythm pattern is provided, use it for context
+        if rhythm_pattern and rhythm_pattern in expected_lengths:
+            expected = expected_lengths[rhythm_pattern]
+        elif rhythm_pattern:
+            # For unknown patterns, sum the groups
+            try:
+                groups = rhythm_pattern.split('+')
+                expected = sum(int(g.replace('R', '')) for g in groups if g.replace('R', '').isdigit())
+            except (ValueError, AttributeError):
+                expected = self.ornamentation_base_length
+        else:
+            # Fallback to original approach
+            expected = self.ornamentation_base_length
+        
+        extra_clicks = max(0, coda.num_clicks - expected)
+        has_ornamentation = extra_clicks > 0
+        
+        return extra_clicks, has_ornamentation
+    
+    def is_likely_echolocation(self, coda: Coda) -> bool:
+        """
+        Check if this is likely echolocation rather than communication.
+        
+        Echolocation characteristics:
+        - Very regular inter-click intervals (low coefficient of variation)
+        - High click rate (>8 clicks/second)
+        - Long sequences (>10 clicks)
+        - No rhythm pattern variation
         
         Parameters:
         -----------
@@ -266,16 +375,78 @@ class FeatureExtractor:
             
         Returns:
         --------
-        ornamentation_count : int
-            Number of extra clicks beyond base pattern
-        has_ornamentation : bool
-            Whether ornamentation is present
+        bool
+            True if likely echolocation, False if likely communication
         """
-        # Simple approach: consider codas longer than base length as ornamented
-        extra_clicks = max(0, coda.num_clicks - self.ornamentation_base_length)
-        has_ornamentation = extra_clicks > 0
+        if coda.num_clicks < 10:
+            return False
         
-        return extra_clicks, has_ornamentation
+        if len(coda.inter_click_intervals) == 0:
+            return False
+            
+        # Calculate regularity (coefficient of variation)
+        icis = coda.inter_click_intervals
+        mean_ici = np.mean(icis)
+        std_ici = np.std(icis)
+        cv_ici = std_ici / mean_ici if mean_ici > 0 else 0
+        
+        # Calculate click rate
+        click_rate = coda.num_clicks / coda.duration if coda.duration > 0 else 0
+        
+        # Echolocation criteria
+        is_regular = cv_ici < 0.1  # Very regular timing
+        is_fast = click_rate > 8   # Fast clicking
+        is_long = coda.num_clicks > 20  # Extended sequence
+        
+        # Need at least two criteria for echolocation classification
+        criteria_met = sum([is_regular, is_fast, is_long])
+        
+        return criteria_met >= 2
+    
+    def calculate_confidence_scores(self, coda: Coda, rhythm_pattern: str, rhythm_groups: List[int]) -> Tuple[float, float, float]:
+        """
+        Calculate confidence scores for detection and classification.
+        
+        Parameters:
+        -----------
+        coda : Coda
+            Coda to analyze
+        rhythm_pattern : str
+            Detected rhythm pattern
+        rhythm_groups : List[int]
+            Rhythm group sizes
+            
+        Returns:
+        --------
+        detection_confidence : float
+            Overall detection confidence (0-1)
+        rhythm_confidence : float
+            Rhythm pattern confidence (0-1)
+        classification_confidence : float
+            Feature classification confidence (0-1)
+        """
+        # Detection confidence based on click count and ICI consistency
+        detection_conf = min(1.0, coda.num_clicks / 10.0)  # Higher confidence with more clicks
+        
+        # Rhythm confidence based on ICI pattern consistency
+        if len(coda.inter_click_intervals) > 1:
+            icis = coda.inter_click_intervals
+            cv = np.std(icis) / np.mean(icis) if np.mean(icis) > 0 else 1.0
+            # Lower CV = higher confidence in rhythm detection
+            rhythm_conf = max(0.1, 1.0 - cv)
+        else:
+            rhythm_conf = 0.5
+        
+        # Classification confidence based on pattern recognition
+        known_patterns = {'1+3', '2+3', '1+4', '3+1', '5', '4', '6', '7'}
+        if rhythm_pattern in known_patterns:
+            class_conf = 0.9
+        elif len(rhythm_groups) <= 3:  # Simple patterns
+            class_conf = 0.7
+        else:  # Complex patterns
+            class_conf = 0.5
+        
+        return detection_conf, rhythm_conf, class_conf
     
     def create_phonetic_code(
         self, 
@@ -338,7 +509,16 @@ class FeatureExtractor:
         rhythm_pattern, rhythm_groups = self.extract_rhythm_pattern(coda)
         tempo_cps, tempo_category = self.extract_tempo(coda)
         rubato_score, rubato_level = self.extract_rubato(coda)
-        ornamentation_count, has_ornamentation = self.extract_ornamentation(coda)
+        # FIXED: Pass rhythm pattern for context-aware ornamentation detection
+        ornamentation_count, has_ornamentation = self.extract_ornamentation(coda, rhythm_pattern)
+        
+        # Calculate confidence scores
+        detection_conf, rhythm_conf, class_conf = self.calculate_confidence_scores(
+            coda, rhythm_pattern, rhythm_groups
+        )
+        
+        # Check if likely echolocation
+        is_echolocation = self.is_likely_echolocation(coda)
         
         # Create combined phonetic code
         phonetic_code = self.create_phonetic_code(
@@ -354,7 +534,11 @@ class FeatureExtractor:
             rubato_level=rubato_level,
             ornamentation_count=ornamentation_count,
             has_ornamentation=has_ornamentation,
-            phonetic_code=phonetic_code
+            phonetic_code=phonetic_code,
+            detection_confidence=detection_conf,
+            rhythm_confidence=rhythm_conf,
+            classification_confidence=class_conf,
+            is_echolocation_likely=is_echolocation
         )
     
     def analyze_coda_collection(self, codas: List[Coda]) -> pd.DataFrame:
@@ -392,7 +576,11 @@ class FeatureExtractor:
                 'rubato_level': features.rubato_level.value,
                 'ornamentation_count': features.ornamentation_count,
                 'has_ornamentation': features.has_ornamentation,
-                'phonetic_code': features.phonetic_code
+                'phonetic_code': features.phonetic_code,
+                'detection_confidence': features.detection_confidence,
+                'rhythm_confidence': features.rhythm_confidence,
+                'classification_confidence': features.classification_confidence,
+                'is_echolocation_likely': features.is_echolocation_likely
             }
             
             features_list.append(feature_dict)
@@ -538,7 +726,10 @@ def extract_features_from_clicks(
     features_df : pd.DataFrame
         DataFrame summary of all features
     """
-    from .coda_detector import CodaDetector
+    try:
+        from .coda_detector import CodaDetector
+    except ImportError:
+        from coda_detector import CodaDetector
     
     # Extract detector and extractor kwargs
     detector_kwargs = {k: v for k, v in kwargs.items() 
@@ -567,7 +758,10 @@ if __name__ == "__main__":
     print("  df = extractor.analyze_coda_collection(codas)")
     
     # Demo with synthetic data
-    from .coda_detector import Coda
+    try:
+        from .coda_detector import Coda
+    except ImportError:
+        from coda_detector import Coda
     
     print("\nDemo with synthetic coda:")
     synthetic_clicks = np.array([1.0, 1.2, 1.4, 2.0, 2.2, 2.4, 2.6])

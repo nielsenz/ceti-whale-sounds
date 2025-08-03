@@ -14,8 +14,9 @@ The approach is based on the fact that sperm whale clicks are:
 
 import numpy as np
 from scipy import signal
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict
 import soundfile as sf
+import warnings
 
 
 class ClickDetector:
@@ -45,22 +46,42 @@ class ClickDetector:
     def __init__(
         self, 
         sample_rate: int,
-        lowcut: float = 2000,
-        highcut: float = 20000,
-        threshold_multiplier: float = 3.0,
-        min_click_separation: float = 0.01
+        lowcut: float = 2000,     # Gero et al. 2016: sperm whale clicks 2-20kHz
+        highcut: float = 20000,   # Watkins 1985: peak energy 5-15kHz
+        threshold_multiplier: float = 3.0,  # 3-sigma detection (99.7% confidence)
+        min_click_separation: float = 0.01  # Madsen 2002: min ICI ~10ms
     ):
         self.sample_rate = sample_rate
-        self.lowcut = lowcut
-        self.highcut = highcut
+        self.requested_lowcut = lowcut
+        self.requested_highcut = highcut
         self.threshold_multiplier = threshold_multiplier
         self.min_click_separation = min_click_separation
         
-        # Validate frequency bounds
+        # Validate and adjust frequency bounds with transparency
         nyquist = sample_rate / 2
-        if self.highcut >= nyquist:
-            self.highcut = nyquist * 0.95
-            print(f"Warning: Highcut frequency adjusted to {self.highcut:.0f} Hz (below Nyquist)")
+        if highcut >= nyquist:
+            self.actual_highcut = nyquist * 0.95
+            warnings.warn(
+                f"Requested highcut {highcut}Hz exceeds Nyquist frequency. "
+                f"Using {self.actual_highcut:.0f}Hz instead for {sample_rate}Hz audio. "
+                f"This changes the analysis frequency range and may affect results.",
+                UserWarning
+            )
+        else:
+            self.actual_highcut = highcut
+        
+        self.actual_lowcut = lowcut
+        
+        # Store both requested and actual parameters for transparency
+        self.filter_params = {
+            'requested': {'lowcut': lowcut, 'highcut': highcut},
+            'actual': {'lowcut': self.actual_lowcut, 'highcut': self.actual_highcut},
+            'sample_rate': sample_rate,
+            'nyquist': nyquist
+        }
+        
+        # Validate other parameters
+        self._validate_parameters()
     
     def bandpass_filter(self, audio: np.ndarray) -> np.ndarray:
         """
@@ -80,8 +101,8 @@ class ClickDetector:
             Filtered audio signal
         """
         nyquist = self.sample_rate / 2
-        low = self.lowcut / nyquist
-        high = self.highcut / nyquist
+        low = self.actual_lowcut / nyquist
+        high = self.actual_highcut / nyquist
         
         # Design 4th-order Butterworth bandpass filter
         b, a = signal.butter(4, [low, high], btype='band')
@@ -120,7 +141,22 @@ class ClickDetector:
         if window_size > 1:
             window = signal.windows.hann(window_size)
             window = window / np.sum(window)  # Normalize
-            envelope = signal.convolve(envelope, window, mode='same')
+            
+            # FIXED: Use reflection padding to avoid edge artifacts
+            pad_width = (len(window) - 1) // 2
+            padded_envelope = np.pad(envelope, pad_width, mode='reflect')
+            smoothed = signal.convolve(padded_envelope, window, mode='valid')
+            
+            # Ensure output matches input length
+            if len(smoothed) != len(envelope):
+                # Adjust for any size mismatch
+                if len(smoothed) > len(envelope):
+                    smoothed = smoothed[:len(envelope)]
+                else:
+                    # Pad if too short (rare case)
+                    smoothed = np.pad(smoothed, (0, len(envelope) - len(smoothed)), mode='edge')
+            
+            envelope = smoothed
         
         return envelope
     
@@ -178,6 +214,24 @@ class ClickDetector:
         threshold : float
             Detection threshold used
         """
+        # Input validation
+        if len(audio) == 0:
+            warnings.warn("Audio signal is empty")
+            return np.array([]), np.array([]), 0.0
+        
+        if np.all(audio == 0):
+            warnings.warn("Audio signal is silent (all zeros)")
+            return np.array([]), np.array([]), 0.0
+        
+        # Check for clipping
+        if np.any(np.abs(audio) >= 0.99):
+            warnings.warn("Audio may be clipped - detection accuracy may be reduced")
+        
+        # Check SNR
+        signal_power = np.mean(audio**2)
+        if signal_power < 1e-10:
+            warnings.warn("Very low signal power - check recording levels")
+        
         # Step 1: Bandpass filter to whale click frequencies
         filtered = self.bandpass_filter(audio)
         
@@ -255,6 +309,69 @@ class ClickDetector:
         }
         
         return stats
+    
+    def _validate_parameters(self) -> None:
+        """
+        Validate detector parameters and warn about potential issues.
+        
+        References:
+        -----------
+        - Watkins & Schevill 1977: click frequency characteristics
+        - Madsen et al. 2002: click production mechanics
+        - Gero et al. 2016: Caribbean sperm whale acoustics
+        """
+        if self.actual_lowcut < 1000:
+            warnings.warn(
+                f"Low frequency cutoff {self.actual_lowcut}Hz is below typical "
+                "sperm whale click range. May include ocean noise."
+            )
+        
+        if self.actual_highcut > 25000:
+            warnings.warn(
+                f"High frequency cutoff {self.actual_highcut}Hz is above typical "
+                "sperm whale click range. May include electronic noise."
+            )
+        
+        if self.threshold_multiplier < 2.0:
+            warnings.warn(
+                f"Threshold multiplier {self.threshold_multiplier} may be too low, "
+                "leading to false positive detections."
+            )
+        
+        if self.threshold_multiplier > 5.0:
+            warnings.warn(
+                f"Threshold multiplier {self.threshold_multiplier} may be too high, "
+                "potentially missing weak clicks."
+            )
+        
+        if self.min_click_separation < 0.005:
+            warnings.warn(
+                f"Minimum click separation {self.min_click_separation*1000:.1f}ms "
+                "is below whale click production limits (~5ms)."
+            )
+    
+    def get_parameter_summary(self) -> Dict:
+        """
+        Get a summary of all detection parameters for transparency.
+        
+        Returns:
+        --------
+        Dict
+            Complete parameter summary with scientific justification
+        """
+        return {
+            'frequency_filter': self.filter_params,
+            'detection_params': {
+                'threshold_multiplier': self.threshold_multiplier,
+                'min_click_separation_ms': self.min_click_separation * 1000,
+                'sample_rate': self.sample_rate
+            },
+            'scientific_basis': {
+                'frequency_range': '2-20kHz based on Gero et al. 2016',
+                'threshold_method': '3-sigma detection for 99.7% confidence',
+                'separation_limit': 'Madsen 2002: min ICI ~10ms'
+            }
+        }
 
 
 def process_audio_file(file_path: str, **detector_kwargs) -> dict:
@@ -295,7 +412,8 @@ def process_audio_file(file_path: str, **detector_kwargs) -> dict:
         'threshold': threshold,
         'sample_rate': sample_rate,
         'duration': duration,
-        'stats': stats
+        'stats': stats,
+        'detector_params': detector.get_parameter_summary()
     }
 
 
