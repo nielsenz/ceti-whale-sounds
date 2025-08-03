@@ -7,13 +7,18 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.getcwd(), 'src'))
 
-# Import modules with fallback for missing dependencies
+# Import audio processing modules
+try:
+    import soundfile as sf
+    SOUNDFILE_AVAILABLE = True
+except ImportError:
+    SOUNDFILE_AVAILABLE = False
+
 try:
     import librosa
     LIBROSA_AVAILABLE = True
 except ImportError:
     LIBROSA_AVAILABLE = False
-    print("⚠️  librosa not available - using synthetic test data")
 
 import numpy as np
 import pandas as pd
@@ -106,59 +111,108 @@ def test_synthetic_data():
     return features_df
 
 def test_real_audio():
-    """Test with real whale audio if available."""
-    if not LIBROSA_AVAILABLE:
-        print("⚠️  Skipping real audio test - librosa not available")
+    """Test with real whale audio using soundfile."""
+    if not SOUNDFILE_AVAILABLE:
+        print("⚠️  Skipping real audio test - soundfile not available")
         return None
     
-    print("\n🎧 Testing with real whale audio")
-    print("=" * 40)
+    print("\n🎧 Testing with real whale audio (using soundfile)")
+    print("=" * 50)
     
-    # Look for audio files
-    data_dir = Path('data/raw')
-    audio_files = list(data_dir.glob('*.wav'))
+    # Look for audio files in watkins directory
+    watkins_dir = Path('data/raw/watkins')
+    if not watkins_dir.exists():
+        data_dir = Path('data/raw')
+        audio_files = list(data_dir.glob('*.wav'))
+    else:
+        audio_files = list(watkins_dir.glob('*.wav'))
     
     if not audio_files:
-        print("No audio files found - run scripts/download_sample_data.py first")
+        print("❌ No audio files found - run scripts/download_sample_data.py first")
         return None
     
     # Test first file
     test_file = audio_files[0]
-    print(f"Analyzing: {test_file.name}")
+    print(f"🐋 Analyzing: {test_file.name}")
     
-    # Load and analyze
-    audio, sr = librosa.load(test_file, sr=None)
+    # Load and analyze using soundfile (not librosa)
+    audio, sr = sf.read(test_file)
+    
+    # Convert stereo to mono if needed
+    if len(audio.shape) > 1:
+        audio = np.mean(audio, axis=1)
+        
     duration = len(audio) / sr
-    print(f"Duration: {duration:.1f}s, Sample rate: {sr}Hz")
+    print(f"📊 Duration: {duration:.1f}s, Sample rate: {sr}Hz, Samples: {len(audio)}")
     
     # Detect clicks with improved detector
+    print(f"🔧 Initializing improved click detector...")
     detector = click_detector.ClickDetector(sr)
+    params = detector.get_parameter_summary()
+    print(f"   Filter range: {params['frequency_filter']['actual']['lowcut']}-{params['frequency_filter']['actual']['highcut']} Hz")
+    print(f"   Scientific basis: {params['scientific_basis']['frequency_range']}")
+    
+    print(f"🎯 Detecting clicks with improved algorithms...")
     click_times, envelope, threshold = detector.detect_clicks(audio)
-    print(f"Detected {len(click_times)} clicks")
+    print(f"   Detected {len(click_times)} clicks")
     
     if len(click_times) > 0:
+        # Calculate click statistics
+        if len(click_times) > 1:
+            icis = np.diff(click_times)
+            print(f"   Click rate: {len(click_times)/duration:.1f} clicks/second")
+            print(f"   Inter-click intervals: {np.mean(icis):.3f} ± {np.std(icis):.3f}s")
+        
         # Group and analyze
+        print(f"🐋 Grouping clicks into codas...")
         coda_det = coda_detector.CodaDetector()
         codas = coda_det.group_clicks_to_codas(click_times)
+        print(f"   Found {len(codas)} codas")
         
-        extractor = feature_extractor.FeatureExtractor()
-        features_df = extractor.analyze_coda_collection(codas)
-        
-        # Show results
-        comm_codas = features_df[~features_df['is_echolocation_likely']]
-        echo_codas = features_df[features_df['is_echolocation_likely']]
-        
-        print(f"\nReal audio results:")
-        print(f"  Total codas: {len(features_df)}")
-        print(f"  Communication: {len(comm_codas)}")
-        print(f"  Echolocation: {len(echo_codas)}")
-        
-        if len(comm_codas) > 0:
-            print(f"\nCommunication patterns found:")
-            for pattern in comm_codas['phonetic_code'].unique()[:5]:
-                print(f"  {pattern}")
+        if len(codas) > 0:
+            print(f"🎵 Extracting phonetic features with improved algorithms...")
+            extractor = feature_extractor.FeatureExtractor()
+            features_df = extractor.analyze_coda_collection(codas)
+            
+            # Show echolocation filtering results
+            comm_codas = features_df[~features_df['is_echolocation_likely']]
+            echo_codas = features_df[features_df['is_echolocation_likely']]
+            
+            print(f"   Total codas analyzed: {len(features_df)}")
+            print(f"   🗣️  Communication codas: {len(comm_codas)}")
+            print(f"   🔍 Likely echolocation: {len(echo_codas)}")
+            
+            if len(comm_codas) > 0:
+                print(f"\n🎶 REAL WHALE COMMUNICATION PATTERNS:")
+                print("-" * 45)
+                for i, (_, row) in enumerate(comm_codas.iterrows()):
+                    print(f"   Coda {i+1}: {row['phonetic_code']}")
+                    print(f"      • {row['num_clicks']} clicks over {row['duration']:.2f}s")
+                    print(f"      • Rhythm: {row['rhythm_pattern']}")
+                    print(f"      • Tempo: {row['tempo_cps']:.2f} clicks/sec ({row['tempo_category']})")
+                    print(f"      • Rubato: {row['rubato_score']:.3f} ({row['rubato_level']})")
+                    print(f"      • Confidence: det={row['detection_confidence']:.2f}, rhythm={row['rhythm_confidence']:.2f}")
+                    print()
+                
+                print(f"📈 PATTERN ANALYSIS:")
+                unique_patterns = comm_codas['rhythm_pattern'].value_counts()
+                print(f"   Unique rhythm patterns: {len(unique_patterns)}")
+                for pattern, count in unique_patterns.items():
+                    print(f"      {pattern}: {count} occurrence(s)")
+                
+                print(f"\n🎯 CONFIDENCE METRICS:")
+                print(f"      Detection confidence: {comm_codas['detection_confidence'].mean():.3f} ± {comm_codas['detection_confidence'].std():.3f}")
+                print(f"      Rhythm confidence: {comm_codas['rhythm_confidence'].mean():.3f} ± {comm_codas['rhythm_confidence'].std():.3f}")
+                print(f"      Classification confidence: {comm_codas['classification_confidence'].mean():.3f} ± {comm_codas['classification_confidence'].std():.3f}")
+            
+            print(f"\n✅ Real whale data analysis complete!")
+            return features_df
+        else:
+            print("   No codas found (insufficient clicks)")
+    else:
+        print("   No clicks detected")
     
-    return features_df
+    return None
 
 def main():
     """Run all tests."""

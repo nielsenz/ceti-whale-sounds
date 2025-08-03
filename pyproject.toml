@@ -1,7 +1,7 @@
 [project]
 name = "ceti-whale-sounds"
 version = "0.1.0"
-description = "Add your description here"
+description = "Sperm Whale Phonetic Alphabet Explorer - analyzing whale communication patterns based on the May 2024 scientific discovery"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -13,5 +13,4 @@ dependencies = [
     "scipy>=1.16.1",
     "soundfile>=0.13.1",
     "streamlit>=1.47.1",
-    "torchaudio>=2.7.1",
 ]

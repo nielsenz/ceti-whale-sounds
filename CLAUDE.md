@@ -37,8 +37,8 @@ Audio Pipeline: WAV file → Click Detection → Coda Grouping → Feature Extra
 
 ### Dependencies & Environment
 ```
-- Python 3.10+
-- librosa (audio processing)
+- Python 3.11+
+- soundfile (audio processing - preferred over librosa)
 - scipy (signal processing) 
 - numpy (numerical computing)
 - pandas (data organization)
@@ -224,12 +224,13 @@ print(features_df[['phonetic_code', 'detection_confidence', 'is_echolocation_lik
 
 **Dependencies Issues:**
 ```bash
-# If librosa fails (Python 3.11+ compatibility issue)
-# The tool works fine with soundfile + scipy (already included)
-# Real whale analysis doesn't require librosa
+# The tool uses soundfile instead of librosa for better compatibility
+# librosa is not required for real whale analysis
+# soundfile + scipy provides all needed functionality
 
 # Check what's available:
 python -c "import soundfile; print('✅ Audio loading works')"
+python -c "import scipy; print('✅ Signal processing works')"
 ```
 
 **No Results:**
@@ -284,13 +285,20 @@ pytest tests/test_performance.py --benchmark
 
 ### Audio Loading Problems
 ```python
-# Always check sample rate
-audio, sr = librosa.load(file_path, sr=None)
+# Use soundfile for reliable audio loading
+import soundfile as sf
+audio, sr = sf.read(file_path)
 print(f"Sample rate: {sr}, Duration: {len(audio)/sr:.2f}s")
 
-# Handle different formats
-if sr != 44100:  # Resample if needed
-    audio = librosa.resample(audio, orig_sr=sr, target_sr=44100)
+# Convert stereo to mono if needed
+if len(audio.shape) > 1:
+    audio = np.mean(audio, axis=1)
+
+# Resample if needed (using scipy)
+from scipy import signal
+if sr != 44100:
+    audio = signal.resample(audio, int(len(audio) * 44100 / sr))
+    sr = 44100
 ```
 
 ### Click Detection Issues

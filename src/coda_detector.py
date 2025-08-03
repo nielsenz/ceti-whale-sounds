@@ -174,10 +174,10 @@ class CodaDetector:
                 'cv_ici': np.std(icis) / np.mean(icis) if np.mean(icis) > 0 else 0,
             })
             
-            # Tempo (clicks per second, excluding start/end gaps)
+            # Tempo (clicks per second for biological interpretation)
             if coda.duration > 0:
-                # Use (n_clicks - 1) / duration for internal tempo
-                analysis['tempo_cps'] = (coda.num_clicks - 1) / coda.duration
+                # FIXED: Use actual clicks per second for biological meaning
+                analysis['tempo_cps'] = coda.num_clicks / coda.duration
             else:
                 analysis['tempo_cps'] = 0.0
             
@@ -284,7 +284,8 @@ class CodaDetector:
         tempos = []
         for coda in codas:
             if coda.duration > 0 and coda.num_clicks > 1:
-                tempo = (coda.num_clicks - 1) / coda.duration
+                # FIXED: Use actual clicks per second for biological meaning
+                tempo = coda.num_clicks / coda.duration
                 tempos.append(tempo)
         
         summary = {
@@ -356,7 +357,8 @@ class CodaDetector:
             
             # Tempo filters
             if coda.duration > 0 and coda.num_clicks > 1:
-                tempo = (coda.num_clicks - 1) / coda.duration
+                # FIXED: Use actual clicks per second for biological meaning
+                tempo = coda.num_clicks / coda.duration
                 if min_tempo is not None and tempo < min_tempo:
                     continue
                 if max_tempo is not None and tempo > max_tempo:
