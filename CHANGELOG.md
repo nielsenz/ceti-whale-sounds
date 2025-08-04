@@ -52,7 +52,7 @@ This represents the first complete, working implementation of the Sperm Whale Ph
 ### 📊 Proven Results
 
 #### Scientific Discoveries
-- **11 Unique Phonetic Patterns** identified across test recordings
+- **7 Unique Phonetic Patterns** identified across test recordings
 - **Complex Multi-group Rhythms**: Patterns with up to 14 rhythm groups
 - **Example Discoveries**:
   - `2+3+1+3+2+3_fast_high_orn` - Complex 6-group pattern with ornamentation
@@ -123,7 +123,7 @@ ceti-whale-sounds/
 | watkins_85004001.wav | 2.83s | 81920 Hz | 11 | 1 | 1 |
 | watkins_91003001.wav | 17.81s | 81920 Hz | 107 | 4 | 4 |
 | watkins_91003005.wav | 17.81s | 81920 Hz | 192 | 4 | 4 |
-| **TOTAL** | **44.12s** | - | **366** | **11** | **11** |
+| **TOTAL** | **44.12s** | - | **366** | **11** | **7** |
 
 #### Pattern Complexity Distribution
 - **Simple Patterns** (1-3 groups): 3 patterns

@@ -210,15 +210,15 @@ This project uses recordings from the **Watkins Marine Mammal Sound Database**:
 
 ### Command Line Analysis
 ```python
-from src.click_detector import SimpleClickDetector
+from src.click_detector import ClickDetector
 from src.coda_detector import CodaDetector
-import librosa
+import soundfile as sf
 
 # Load audio
-audio, sr = librosa.load('data/raw/whale_recording.wav')
+audio, sr = sf.read('data/raw/whale_recording.wav')
 
 # Detect clicks
-detector = SimpleClickDetector(sr)
+detector = ClickDetector(sr)
 clicks, _, _ = detector.detect_clicks(audio)
 
 # Group into codas
@@ -323,7 +323,7 @@ Understanding whale communication helps:
   - **Tempo Classification**: Slow/medium/fast categorization
   - **Rubato Measurement**: Timing variation quantification
   - **Ornamentation Detection**: Extra click identification
-  - Generated 11 unique phonetic codes from test data
+  - Generated 7 unique phonetic codes from test data
 
 #### 🎵 **Real Data Integration**
 - **Watkins Database Integration** (`scripts/download_sample_data.py`)
@@ -341,7 +341,7 @@ Understanding whale communication helps:
 - **Pattern Exploration Tools** with filtering and search
 
 #### 📊 **Proven Scientific Results**
-- **11 Unique Phonetic Patterns** discovered across recordings
+- **7 Unique Phonetic Patterns** discovered across recordings
 - **Complex Rhythms Detected**: `2+3+1+3+2+3_fast_high_orn`
 - **Multi-group Patterns**: Up to 14 rhythm groups in single codas
 - **Tempo Variations**: Fast (4+ cps) to medium (2-4 cps) ranges
@@ -360,7 +360,7 @@ Understanding whale communication helps:
 | Milestone | Status | Details |
 |-----------|--------|---------|
 | Algorithm Implementation | ✅ Complete | All 4 phonetic features extracted |
-| Real Data Testing | ✅ Complete | 5 recordings, 11 patterns discovered |
+| Real Data Testing | ✅ Complete | 5 recordings, 7 patterns discovered |
 | Web Interface | ✅ Complete | Full Streamlit app with visualizations |
 | Scientific Validation | ✅ Complete | Results match expected research patterns |
 | Documentation | ✅ Complete | Comprehensive guides and examples |
@@ -388,7 +388,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - **Watkins Marine Mammal Sound Database** for providing freely accessible whale recordings
 - **The research team** who discovered the sperm whale phonetic alphabet
-- **Librosa developers** for excellent audio processing tools
+- **SoundFile developers** for excellent audio processing tools
 - **Marine biology community** for inspiring this work
 
 ## 📞 Contact & Support

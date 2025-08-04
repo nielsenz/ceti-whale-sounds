@@ -46,6 +46,8 @@ if 'current_audio' not in st.session_state:
     st.session_state.current_audio = None
 if 'current_sample_rate' not in st.session_state:
     st.session_state.current_sample_rate = None
+if 'last_params' not in st.session_state:
+    st.session_state.last_params = None
 
 
 def load_sample_files():
@@ -56,7 +58,7 @@ def load_sample_files():
     return []
 
 
-def analyze_audio(audio_file_path, progress_bar=None):
+def analyze_audio(audio_file_path, progress_bar=None, detector_params=None, coda_params=None):
     """
     Analyze whale audio file and return results.
     
@@ -66,6 +68,10 @@ def analyze_audio(audio_file_path, progress_bar=None):
         Path to audio file
     progress_bar : streamlit progress bar, optional
         Progress bar to update during processing
+    detector_params : dict, optional
+        Parameters for ClickDetector initialization
+    coda_params : dict, optional
+        Parameters for CodaDetector initialization
         
     Returns:
     --------
@@ -73,9 +79,14 @@ def analyze_audio(audio_file_path, progress_bar=None):
         Analysis results including clicks, codas, and features
     """
     try:
-        # Initialize detectors
-        detector = ClickDetector(sample_rate=44100)
-        coda_detector = CodaDetector()
+        # Initialize detectors with user parameters
+        if detector_params is None:
+            detector_params = {}
+        if coda_params is None:
+            coda_params = {}
+            
+        detector = ClickDetector(sample_rate=44100, **detector_params)
+        coda_detector = CodaDetector(**coda_params)
         extractor = FeatureExtractor()
         
         if progress_bar:
@@ -292,7 +303,8 @@ def main():
     # File source selection
     source_type = st.sidebar.radio(
         "Choose audio source:",
-        ["Sample Files", "Upload File"]
+        ["Sample Files", "Upload File"],
+        key="source_type"
     )
     
     audio_file = None
@@ -318,7 +330,8 @@ def main():
         uploaded_file = st.sidebar.file_uploader(
             "Upload a whale recording (WAV format):",
             type=['wav'],
-            help="Upload a WAV file containing sperm whale vocalizations"
+            help="Upload a WAV file containing sperm whale vocalizations",
+            key="audio_uploader"
         )
         
         if uploaded_file:
@@ -326,6 +339,10 @@ def main():
             with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_file:
                 tmp_file.write(uploaded_file.read())
                 audio_file = tmp_file.name
+                
+            # Show uploaded file info
+            file_size = len(uploaded_file.getvalue()) / (1024 * 1024)
+            st.sidebar.info(f"**File:** {uploaded_file.name}  \n**Size:** {file_size:.1f} MB")
     
     # Analysis controls
     st.sidebar.header("🔧 Analysis Settings")
@@ -335,7 +352,8 @@ def main():
     threshold_multiplier = st.sidebar.slider(
         "Detection Sensitivity", 
         min_value=1.0, max_value=5.0, value=3.0, step=0.1,
-        help="Higher values = fewer false positives, lower values = catch more clicks"
+        help="Higher values = fewer false positives, lower values = catch more clicks",
+        key="threshold_multiplier"
     )
     
     # Coda detection parameters  
@@ -343,33 +361,63 @@ def main():
     max_ici = st.sidebar.slider(
         "Max Inter-Click Interval (s)",
         min_value=0.5, max_value=5.0, value=2.0, step=0.1,
-        help="Maximum time between clicks in the same coda"
+        help="Maximum time between clicks in the same coda",
+        key="max_ici"
     )
     
     min_clicks = st.sidebar.slider(
         "Minimum Clicks per Coda",
         min_value=2, max_value=10, value=3, step=1,
-        help="Minimum number of clicks to form a valid coda"
+        help="Minimum number of clicks to form a valid coda",
+        key="min_clicks"
     )
+    
+    # Create current parameter set for comparison
+    current_params = {
+        'threshold_multiplier': threshold_multiplier,
+        'max_ici': max_ici,
+        'min_clicks': min_clicks
+    }
+    
+    # Check if parameters have changed
+    params_changed = (st.session_state.last_params != current_params)
+    
+    # Show parameter status
+    if params_changed and st.session_state.last_params is not None:
+        st.sidebar.info("⚙️ Parameters changed. Click 'Analyze Audio' to apply new settings.")
+    
+    # Show current parameter values
+    with st.sidebar.expander("📊 Current Parameter Values", expanded=False):
+        st.write(f"**Detection Sensitivity:** {threshold_multiplier:.1f}")
+        st.write(f"**Max Inter-Click Interval:** {max_ici:.1f}s")
+        st.write(f"**Min Clicks per Coda:** {min_clicks}")
+        
+        if st.session_state.last_params is not None:
+            st.write("**Last Analysis Used:**")
+            st.write(f"- Sensitivity: {st.session_state.last_params['threshold_multiplier']:.1f}")
+            st.write(f"- Max ICI: {st.session_state.last_params['max_ici']:.1f}s")
+            st.write(f"- Min Clicks: {st.session_state.last_params['min_clicks']}")
     
     # Analysis button
     if audio_file and st.sidebar.button("🔍 Analyze Audio", type="primary"):
         with st.spinner("Analyzing whale communication patterns..."):
             progress_bar = st.progress(0)
             
-            # Update detector parameters
-            if 'detector' not in st.session_state:
-                st.session_state.detector = ClickDetector(
-                    sample_rate=44100,
-                    threshold_multiplier=threshold_multiplier
-                )
-                st.session_state.coda_detector = CodaDetector(
-                    max_ici=max_ici,
-                    min_clicks=min_clicks
-                )
+            # Prepare detector parameters
+            detector_params = {
+                'threshold_multiplier': threshold_multiplier
+            }
             
-            # Analyze audio
-            results = analyze_audio(audio_file, progress_bar)
+            coda_params = {
+                'max_ici': max_ici,
+                'min_clicks': min_clicks
+            }
+            
+            # Store current parameters
+            st.session_state.last_params = current_params.copy()
+            
+            # Analyze audio with user parameters
+            results = analyze_audio(audio_file, progress_bar, detector_params, coda_params)
             
             if results:
                 st.session_state.analysis_results = results
@@ -377,6 +425,16 @@ def main():
                 st.session_state.current_sample_rate = results['sample_rate']
                 progress_bar.empty()
                 st.success(f"✅ Analysis complete! Found {len(results['clicks'])} clicks in {len(results['codas'])} codas.")
+                
+                # Show parameter confirmation
+                st.sidebar.success("✅ New parameters applied successfully!")
+                
+                # Add analysis info to results for transparency
+                results['analysis_params'] = {
+                    'detector_params': detector_params,
+                    'coda_params': coda_params,
+                    'analysis_timestamp': pd.Timestamp.now()
+                }
     
     # Display results
     if st.session_state.analysis_results:
@@ -398,6 +456,17 @@ def main():
                 st.metric("Unique Patterns", unique_patterns)
             else:
                 st.metric("Unique Patterns", 0)
+        
+        # Show analysis parameters used
+        if 'analysis_params' in results:
+            with st.expander("⚙️ Analysis Parameters Used", expanded=False):
+                params = results['analysis_params']
+                st.write("**Click Detection:**")
+                st.write(f"- Threshold Multiplier: {params['detector_params']['threshold_multiplier']:.1f}")
+                st.write("**Coda Grouping:**")
+                st.write(f"- Max Inter-Click Interval: {params['coda_params']['max_ici']:.1f}s")
+                st.write(f"- Minimum Clicks per Coda: {params['coda_params']['min_clicks']}")
+                st.write(f"**Analysis Time:** {params['analysis_timestamp'].strftime('%Y-%m-%d %H:%M:%S')}")
         
         # Audio analysis visualization
         st.header("🎵 Audio Analysis")
@@ -464,7 +533,18 @@ def main():
                 st.write(f"- Ornamentation frequency: {stats.get('ornamentation_frequency', 0):.1%}")
         
         else:
-            st.warning("No codas detected. Try adjusting the analysis parameters in the sidebar.")
+            st.warning("⚠️ No codas detected. Try adjusting the analysis parameters in the sidebar:")
+            st.write("**Suggestions:**")
+            st.write("- **Lower Detection Sensitivity** (1.5-2.5) to catch more clicks")
+            st.write("- **Increase Max Inter-Click Interval** (3-4s) for longer codas")
+            st.write("- **Reduce Min Clicks per Coda** (2) for shorter patterns")
+            
+            if 'analysis_params' in results:
+                st.write("**Current Settings:**")
+                params = results['analysis_params']
+                st.write(f"- Sensitivity: {params['detector_params']['threshold_multiplier']:.1f}")
+                st.write(f"- Max ICI: {params['coda_params']['max_ici']:.1f}s")
+                st.write(f"- Min Clicks: {params['coda_params']['min_clicks']}")
     
     # About section
     st.sidebar.markdown("---")
