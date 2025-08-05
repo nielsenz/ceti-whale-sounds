@@ -24,6 +24,7 @@ import io
 from pathlib import Path
 import tempfile
 import base64
+import soundfile as sf
 
 # Import our whale analysis modules
 from src.click_detector import ClickDetector
@@ -271,7 +272,7 @@ def plot_phonetic_patterns(features_df):
     return fig
 
 
-def create_audio_player(audio, sample_rate, start_time=0, duration=None):
+def create_audio_player(audio, sample_rate, start_time=0, duration=None, label="Audio"):
     """Create an audio player for a specific audio segment."""
     if duration is None:
         audio_segment = audio[int(start_time * sample_rate):]
@@ -280,10 +281,16 @@ def create_audio_player(audio, sample_rate, start_time=0, duration=None):
         end_sample = int((start_time + duration) * sample_rate)
         audio_segment = audio[start_sample:end_sample]
     
-    # Convert to bytes for playback
-    audio_bytes = (audio_segment * 32767).astype(np.int16).tobytes()
+    # Normalize audio to prevent clipping
+    if len(audio_segment) > 0:
+        max_val = np.max(np.abs(audio_segment))
+        if max_val > 0:
+            audio_segment = audio_segment / max_val * 0.8  # Scale to 80% to prevent clipping
     
-    return audio_bytes, sample_rate
+    # Display audio player in Streamlit
+    st.audio(audio_segment, sample_rate=sample_rate, format='audio/wav')
+    
+    return audio_segment
 
 
 def main():
@@ -473,6 +480,40 @@ def main():
         
         fig_audio = plot_audio_analysis(results)
         st.plotly_chart(fig_audio, use_container_width=True)
+        
+        # Audio playback section
+        st.subheader("🔊 Audio Playback")
+        
+        col1, col2 = st.columns([1, 1])
+        
+        with col1:
+            st.write("**Full Recording:**")
+            st.write(f"Duration: {results['duration']:.1f}s")
+            create_audio_player(results['audio'], results['sample_rate'], label="Full Recording")
+        
+        with col2:
+            if results['codas']:
+                st.write("**Individual Codas:**")
+                coda_options = [f"Coda {i+1} ({len(coda)} clicks)" for i, coda in enumerate(results['codas'])]
+                selected_coda_idx = st.selectbox("Select coda to play:", range(len(coda_options)), format_func=lambda x: coda_options[x])
+                
+                if selected_coda_idx is not None:
+                    coda = results['codas'][selected_coda_idx]
+                    start_time = coda[0] - 0.5  # Add 0.5s buffer before
+                    end_time = coda[-1] + 0.5   # Add 0.5s buffer after
+                    
+                    # Ensure we don't go outside audio bounds
+                    start_time = max(0, start_time)
+                    end_time = min(results['duration'], end_time)
+                    duration = end_time - start_time
+                    
+                    st.write(f"Playing coda {selected_coda_idx + 1}: {start_time:.1f}s - {end_time:.1f}s")
+                    create_audio_player(results['audio'], results['sample_rate'], 
+                                      start_time=start_time, duration=duration, 
+                                      label=f"Coda {selected_coda_idx + 1}")
+            else:
+                st.write("**No codas to play**")
+                st.info("No communication codas were detected. Adjust the analysis parameters and try again.")
         
         # Phonetic patterns
         if not results['features_df'].empty:

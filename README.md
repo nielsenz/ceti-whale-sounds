@@ -139,7 +139,8 @@ This version includes major scientific accuracy fixes that make results **public
 - 🎼 **Measure rubato** - detect timing variations that add "expression"
 - ✨ **Find ornamentation** - identify decorative extra clicks
 - 📊 **Interactive exploration** - filter by patterns, adjust detection parameters
-- 🎧 **Audio playback** - listen to individual codas and communication patterns
+- 🎧 **Audio playback** - listen to full recordings and individual whale communication patterns
+- 🔊 **Interactive audio players** - play specific codas with context buffering for clear listening
 
 ## 📁 Project Structure
 
@@ -230,7 +231,8 @@ print(f"Found {len(clicks)} clicks in {len(codas)} codas")
 
 ### Web Interface Features
 - **Pattern Browser**: Explore different rhythm/tempo combinations
-- **Audio Player**: Listen to individual codas
+- **Audio Playback**: Listen to full recordings and individual whale codas with smart buffering
+- **Interactive Players**: Select and play specific communication patterns with time range display
 - **Search & Filter**: Find specific phonetic patterns
 - **Export Results**: Download analysis data
 
@@ -339,6 +341,7 @@ Understanding whale communication helps:
 - **Audio Upload Support** for user recordings
 - **Parameter Tuning Interface** for detection sensitivity
 - **Pattern Exploration Tools** with filtering and search
+- **Audio Playback System** with full recording and individual coda players (August 2025)
 
 #### 📊 **Proven Scientific Results**
 - **7 Unique Phonetic Patterns** discovered across recordings
