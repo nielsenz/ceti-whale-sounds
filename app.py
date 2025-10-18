@@ -80,26 +80,30 @@ def analyze_audio(audio_file_path, progress_bar=None, detector_params=None, coda
         Analysis results including clicks, codas, and features
     """
     try:
-        # Initialize detectors with user parameters
+        # Initialize parameter containers
         if detector_params is None:
             detector_params = {}
         if coda_params is None:
             coda_params = {}
-            
-        detector = ClickDetector(sample_rate=44100, **detector_params)
-        coda_detector = CodaDetector(**coda_params)
-        extractor = FeatureExtractor()
-        
+
+        # Load audio first to get the true sample rate
         if progress_bar:
             progress_bar.progress(10, "Loading audio...")
-        
-        # Load audio
-        audio, sr = detector.load_audio(str(audio_file_path))
-        duration = len(audio) / sr
-        
+
+        audio, sr = sf.read(str(audio_file_path))
+        # Convert stereo to mono if needed
+        if hasattr(audio, 'shape') and len(audio.shape) > 1:
+            audio = np.mean(audio, axis=1)
+        duration = len(audio) / sr if sr else 0.0
+
+        # Initialize detectors with the actual file sample rate
+        detector = ClickDetector(sample_rate=sr, **detector_params)
+        coda_detector = CodaDetector(**coda_params)
+        extractor = FeatureExtractor()
+
         if progress_bar:
             progress_bar.progress(30, "Detecting clicks...")
-        
+
         # Detect clicks
         clicks, envelope, threshold = detector.detect_clicks(audio)
         
@@ -134,7 +138,8 @@ def analyze_audio(audio_file_path, progress_bar=None, detector_params=None, coda
             'codas': codas,
             'features_df': features_df,
             'pattern_stats': pattern_stats,
-            'filename': Path(audio_file_path).name
+            'filename': Path(audio_file_path).name,
+            'detector_summary': detector.get_parameter_summary(),
         }
         
         return results
